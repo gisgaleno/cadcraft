@@ -3,9 +3,12 @@
 //! empty, `CRAFT_FONTS` is empty and the build is unchanged. It only reads the local checkout
 //! (no network). A bad checkout is a warning, or an error with `CRAFT_FONTS_REQUIRED=1`.
 //!
-//! On wasm32 it embeds only BIZ UDPGothic Regular and the `Arab` faces (about 5.5 MB), to keep the
-//! web build within hosting limits (Cloudflare Pages: 25 MiB per file). The web build has no
-//! system fonts, so these are its only fallback for Japanese and Arabic-script text.
+//! On wasm32 the stock build embeds only BIZ UDPGothic Regular and the `Arab` faces (about
+//! 5.5 MB), to keep the web build within hosting limits (Cloudflare Pages: 25 MiB per file).
+//!
+//! This checkout (CAD 工作台 portal) instead embeds **Hans (Simplified Chinese) + `Arab`** and
+//! drops the Japanese face: the portal serves Chinese drawings, self-hosting has no size limit,
+//! and Noto Sans CJK covers Latin as well. Japanese text is out of scope by design.
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -46,12 +49,18 @@ fn craft_fonts(dir: &std::path::Path) -> Result<String, String> {
         let [family, style, file, scripts, ..] = f.as_slice() else {
             return Err(format!("malformed manifest line: {line}"));
         };
-        if BARRED_FAMILIES.iter().any(|barred| family.starts_with(barred)) {
+        let arabic = scripts.split(',').any(|s| s.trim() == "Arab");
+        // Self-hosted web builds: also embed Simplified Chinese (Hans). The stock build skips it
+        // for Cloudflare's 25 MiB hosting limit; we have no such limit and Chinese drawings need
+        // the glyphs (otherwise every CJK character renders as a hollow box).
+        let hans = scripts.split(',').any(|s| s.trim() == "Hans");
+        // The barred list is a taste policy against Adobe's Source Han under the Noto CJK name;
+        // the manifest font is OFL-1.1 and self-hosting it is permitted, so Hans is exempted.
+        if BARRED_FAMILIES.iter().any(|barred| family.starts_with(barred)) && !hans {
             println!("cargo::warning=craft-fonts: not embedding {family} {style} (AGENTS.md: no Adobe fonts)");
             continue;
         }
-        let arabic = scripts.split(',').any(|s| s.trim() == "Arab");
-        let web_face = (*family == "BIZ UDPGothic" && *style == "Regular") || arabic;
+        let web_face = arabic || hans;
         if wasm && !web_face {
             continue;
         }

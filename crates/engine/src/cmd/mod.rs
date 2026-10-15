@@ -211,6 +211,98 @@ pub fn find_command(id: &str) -> Option<&'static CommandSpec> {
     command_specs().iter().find(|c| c.id == l)
 }
 
+/// Commands a read-only viewer (`Session::viewer`) may run: navigation and display (`View`,
+/// `Window`, `Help`), the `Tools ▸ Inquiry` measurements, and the settings toggles, selection and
+/// layer-visibility switches listed below. Everything that can change drawing data — `Draw`,
+/// `Modify`, `Dimension`, `Insert`, the `Format` edits and the `File` writes — is refused, so a
+/// viewer can look at a drawing and measure it but never alter it.
+pub fn viewer_allows(id: &str, params: &Value) -> bool {
+    // The Layers palette switches visibility through `layer.set`: a viewer may flip on / frozen /
+    // locked / plot, never rename a layer or change its colour, linetype or lineweight.
+    if id == "layer.set" {
+        return params
+            .as_object()
+            .is_some_and(|o| !o.is_empty() && o.keys().all(|k| matches!(k.as_str(), "name" | "on" | "frozen" | "locked" | "plot")));
+    }
+    if VIEWER_COMMANDS.contains(&id) || viewer_reads(id) {
+        return true;
+    }
+    match find_command(id).map(|c| c.menu) {
+        Some(menu) if !menu.is_empty() => match menu[0] {
+            "View" | "Window" | "Help" => true,
+            // Measurements only: the drafting settings and the rest of Tools stay out.
+            "Tools" => menu.get(1) == Some(&"Inquiry"),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Read-only queries: the lists and inspections the palettes and dialogs read through. They cannot
+/// change the drawing, and refusing them would leave a viewer's Blocks, Layers and Styles palettes
+/// empty. Nothing that ends in `.list` or `.inspect` writes.
+fn viewer_reads(id: &str) -> bool {
+    id.ends_with(".list")
+        || id.ends_with(".inspect")
+        || matches!(
+            id,
+            "getvar"
+                | "sysvars"
+                | "entities"
+                | "qselect.info"
+                | "view.get"
+                | "countlist"
+                | "counttable"
+                | "hatch.patterns"
+                | "drawing.inspect"
+                | "constraints.dof"
+                | "quickcalc.pick"
+        )
+}
+
+/// Display toggles and layer visibility: they change settings, never drawing data. Most of these
+/// have no menu path (they are toggles and the typed `ZOOM`/`PAN`), so the menu rule below does
+/// not see them and they are listed here instead.
+const VIEWER_COMMANDS: &[&str] = &[
+    // Navigation: the typed ZOOM and PAN (the menu items are zoom.* / pan.* under View).
+    "zoom",
+    "pan",
+    // Selection and pick behaviour.
+    "selectall",
+    "qselect",
+    "pickstyle",
+    // Drafting and display toggles.
+    "grid",
+    "ortho",
+    "snap",
+    "polar",
+    "otrack",
+    "dynmode",
+    "osnap",
+    "lwdisplay",
+    "transparencydisplay",
+    "isoplane",
+    "isodraft",
+    "qpmode",
+    "selectioncycling",
+    // Measurement that is not under Tools ▸ Inquiry.
+    "measuregeom",
+    // Layer visibility.
+    "layon",
+    "layoff",
+    "layfrz",
+    "laythw",
+    "layiso",
+    "layuniso",
+    // Output: plotting and exporting never change the drawing.
+    "plot",
+    "preview",
+    "exportpdf",
+    "export",
+    // Opening a drawing is what a viewer is for: the embedding host sends files through it.
+    "open",
+];
+
 /// Resolve a typed name or alias (AutoCAD-style short names such as `L`, `C`, `PL`) to an id.
 /// Command names win; the user's aliases (ALIASEDIT, REINIT) come before the built-in ones.
 pub fn resolve_alias(name: &str) -> String {

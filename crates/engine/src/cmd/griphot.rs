@@ -472,6 +472,11 @@ impl Session {
     /// several first). `hot` lists (object, grip index); the first is the base grip. The grip
     /// modes and their options then run at the command line like any prompt.
     pub fn start_grip_edit(&mut self, hot: &[(Handle, usize)]) -> Result<()> {
+        // Grips are a direct Session call, not a command, so the viewer guard in
+        // [`Session::execute`] does not see it: without this a drag would still edit the drawing.
+        if self.viewer {
+            return Err(other("read-only drawing: grip editing is not available in a viewer"));
+        }
         if self.running.is_some() {
             self.cancel();
         }

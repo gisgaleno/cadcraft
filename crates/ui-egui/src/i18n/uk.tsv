@@ -1170,6 +1170,10 @@
 	Vertical	Вертикальність
 	VerticalDistance	Вертикальна відстань
 	View	Вид
+	Read-only Viewer Mode	Режим перегляду (лише читання)
+	Leave Read-only Viewer Mode	Вийти з режиму перегляду
+	Read-only viewer: drawing and editing are unavailable	Режим перегляду: креслення й редагування недоступні
+	Editing is available again	Редагування знову доступне
 	ViewCube	Куб виду
 	Viewport	Видовий екран
 	Viewport Layer Freeze	Заморозити шар у видовому екрані

@@ -618,6 +618,10 @@ pub struct Session {
     pub running: Option<Running>,
     /// A script is running ([`Session::script`]); a SCRIPT command inside it is refused.
     in_script: bool,
+    /// Read-only viewer mode: the command funnels refuse everything that could change drawing
+    /// data, and the interface hides the drawing chrome. Set by the embedding host (the web app's
+    /// `?viewer`, or the `ui.viewer.on` command) and left alone afterwards.
+    pub viewer: bool,
     /// The command suspended while a transparent command (`'ZOOM`, `'PAN`…) prompts inside it;
     /// it resumes when that command ends. One level, as in AutoCAD.
     pub suspended: Option<Running>,
@@ -693,6 +697,7 @@ impl Session {
             settings: Settings::default(),
             running: None,
             in_script: false,
+            viewer: false,
             suspended: None,
             log: Vec::new(),
             last_command: None,
@@ -857,12 +862,23 @@ impl Session {
         v.height / self.viewport_px.1.max(1.0)
     }
 
+    /// Refuse `id` in a read-only viewer ([`Session::viewer`]). Every entering path — menus,
+    /// shortcuts, the command line, the control channel and JSON calls — funnels through
+    /// [`Session::execute`] or [`Session::start`], so this is the one place editing is stopped.
+    fn refuse_in_viewer(&self, id: &str, params: &Value, label: &str) -> Result<()> {
+        if self.viewer && !cmd::viewer_allows(id, params) {
+            return Err(EngineError::Other(format!("read-only drawing: {label} is not available in a viewer")));
+        }
+        Ok(())
+    }
+
     // ---------------- programmatic execution ----------------
 
     /// Run a command with JSON parameters (no dialogs). Records undo when the drawing changes.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
         (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
+        self.refuse_in_viewer(id, params, spec.label)?;
         if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {
             return Err(EngineError::Disabled(spec.id.into(), why));
         }
@@ -952,6 +968,8 @@ impl Session {
             }
             return Err(EngineError::UnknownCommand(name.to_string()));
         };
+        // A viewer starts nothing that draws or edits, however it was reached.
+        self.refuse_in_viewer(&id, &Value::Null, spec.label)?;
         if transparent && spec.transparent && self.running.is_some() {
             // Transparent commands (zoom, pan…) run without cancelling the active one.
             if spec.interactive.is_none() {
@@ -1571,6 +1589,9 @@ impl Session {
     /// A script cannot run a script: the SCRIPT command (or another `cmd {json}` call) inside a
     /// running one is refused, so two files that run each other cannot recurse until the stack dies.
     pub fn script(&mut self, text: &str) -> Result<()> {
+        // A script types commands on the user's behalf: a viewer refuses it whole, since the
+        // control channel reaches SCRIPT without passing [`Session::start`] per line.
+        self.refuse_in_viewer("script", &Value::Null, "Script")?;
         if self.in_script {
             return Err(EngineError::BadParams { cmd: "script".into(), msg: "a script is already running; nested scripts are not supported".into() });
         }

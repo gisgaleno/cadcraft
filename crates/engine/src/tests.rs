@@ -1340,3 +1340,55 @@ fn hostile_variable_like_input_never_panics() {
     s.cmdline("pickadd").unwrap();
     assert!(setvar_prompt_open(&s));
 }
+
+#[test]
+fn viewer_refuses_edits_and_allows_browsing() {
+    let mut s = Session::new();
+    s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
+    s.execute("layer.new", &json!({"name": "Walls", "color": 1})).unwrap();
+
+    // 对照组：同一批操作在可编辑会话里都是允许的。
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let h = s.doc().unwrap().model.iter().next().unwrap().handle;
+    s.start_grip_edit(&[(h, 0)]).unwrap();
+    s.cancel();
+
+    s.viewer = true;
+
+    // 改动类：一律拒绝，且错误说明是只读而不是别的失败。
+    for (id, params) in [
+        ("line", json!({"points": [[20, 0], [30, 0]]})),
+        ("erase", json!({"all": true})),
+        ("layer.new", json!({"name": "Extra"})),
+        ("layer.set", json!({"name": "Walls", "color": 3})),
+        ("layer.set", json!({"name": "Walls", "newName": "X"})),
+    ] {
+        let e = s.execute(id, &params).unwrap_err().to_string();
+        assert!(e.contains("read-only"), "{id}: {e}");
+    }
+    let e = s.start("move").unwrap_err().to_string();
+    assert!(e.contains("read-only"), "{e}");
+    let h = s.doc().unwrap().model.iter().next().unwrap().handle;
+    let e = s.start_grip_edit(&[(h, 0)]).unwrap_err().to_string();
+    assert!(e.contains("read-only"), "{e}");
+    let e = s.script("LINE 40,0 50,0\n\n").unwrap_err().to_string();
+    assert!(e.contains("read-only"), "{e}");
+
+    // 浏览、测量与图层可见性：放行。
+    s.execute("zoom", &json!({"mode": "extents"})).unwrap();
+    s.execute("pan", &json!({"delta": [10, 0]})).unwrap();
+    s.execute("dist", &json!({"p1": [0, 0], "p2": [3, 4]})).unwrap();
+    s.execute("layer.set", &json!({"name": "Walls", "on": false})).unwrap();
+    s.execute("layer.set", &json!({"name": "Walls", "on": true})).unwrap();
+
+    // 策略本身：无菜单路径的浏览/查询命令放行（菜单规则看不见它们），无菜单的改动类仍拒绝。
+    for id in ["zoom", "pan", "measuregeom", "blocks.list", "qpmode", "selectioncycling", "getvar", "open"] {
+        assert!(cmd::viewer_allows(id, &json!({})), "{id} 应放行");
+    }
+    for id in ["layout.set", "properties.set", "view.set", "layer.new", "wblock", "table.set"] {
+        assert!(!cmd::viewer_allows(id, &json!({})), "{id} 应拒绝");
+    }
+
+    // 图纸没有被改坏。
+    assert_eq!(kinds(&s), vec!["Circle", "Line"]);
+}
