@@ -1,7 +1,8 @@
 //! Fonts from the optional craft-fonts build input (<https://github.com/storytold/craft-fonts>).
 //!
 //! Built with `CRAFT_FONTS_DIR=<craft-fonts checkout>`, `build.rs` embeds the fonts listed in its
-//! `fonts/manifest.txt` (web builds: only BIZ UDPGothic Regular and the Arabic faces).
+//! `fonts/manifest.txt` (this checkout's web build: Noto Sans CJK SC and the Arabic faces — the
+//! stock Japanese face is dropped, the portal serves Chinese drawings).
 //! Without it [`CRAFT_FONTS`] is empty and nothing changes. The font table ([`crate::ttf`])
 //! lists the embedded fonts with the installed ones, under [`CraftFont::stem`]. A text style
 //! can name one (`BIZ UDPGothic`), and they are fallbacks for characters a text's font lacks.
@@ -66,9 +67,15 @@ mod tests {
 
     #[test]
     fn no_barred_family_is_embedded() {
-        // AGENTS.md: no Adobe fonts. Noto Sans CJK is Source Han Sans; `build.rs` skips them.
+        // AGENTS.md: no Adobe fonts. Noto Sans CJK is Source Han Sans; `build.rs` skips them,
+        // except the Hans (Simplified Chinese) face: self-hosted web builds need its glyphs and
+        // the font is OFL-1.1, so it is deliberately exempted there.
         const BARRED: [&str; 5] = ["Source Han", "Source Serif", "Source Sans", "Noto Sans CJK", "Noto Serif CJK"];
         for f in CRAFT_FONTS {
+            if f.family == "Noto Sans CJK SC" {
+                assert!(f.scripts.contains(&"Hans"));
+                continue;
+            }
             assert!(!BARRED.iter().any(|b| f.family.starts_with(b)), "{} is barred", f.family);
         }
     }

@@ -128,6 +128,11 @@ mod web {
                             // viewports stay in the layout's display list.
                             app.set_wgpu(rs, None);
                         }
+                        // `?viewer`: read-only viewer mode — browsing, layers and measurements
+                        // only; the engine refuses every command that would change the drawing.
+                        if query().contains("viewer") {
+                            let _ = app.run("ui.viewer.on", serde_json::json!({}));
+                        }
                         if query().contains("sample") {
                             let _ = app.run("ui.sample", serde_json::json!({}));
                         }

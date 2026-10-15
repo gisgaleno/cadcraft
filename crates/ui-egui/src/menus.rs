@@ -52,6 +52,10 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.toggle.menubar", "In-window Menu Bar", &["Window", "In-window Menu Bar"], None),
     ("ui.hidepalettes", "Hide Palettes", &["Window", "Hide Palettes"], None),
     ("ui.resetpalettes", "Reset Palettes", &["Window", "Reset Palettes"], None),
+    // Read-only viewer: `?viewer` in the web build, or these from the host page.
+    ("ui.viewer.on", "Read-only Viewer Mode", &["View", "Read-only Viewer Mode"], None),
+    ("ui.viewer.off", "Leave Read-only Viewer Mode", &["View", "Leave Read-only Viewer Mode"], None),
+    ("ui.viewer", "Read-only Viewer Mode", &[], None),
     ("ui.start", "Start", &["Window", "Start"], None),
     ("ui.dialog.layers", "Layer Properties Manager", &["Window", "Layers"], None),
     ("ui.dialog.blocks", "Blocks", &["Window", "Blocks"], None),
@@ -73,12 +77,50 @@ pub fn is_ui_command(id: &str) -> bool {
     UI_COMMANDS.iter().any(|c| c.0 == id)
 }
 
+/// Whether a read-only viewer may run this `ui.*` command. Panels, theme, language and the help
+/// dialogs are fine; the three that reach drawing data are not — the Layer Properties Manager
+/// edits layers, New from Template writes a drawing and Save As hands one to the host.
+pub fn viewer_allows_ui(id: &str) -> bool {
+    !matches!(id, "ui.dialog.layers" | "ui.newtemplate" | "ui.saveas")
+}
+
+/// `View ▸ Read-only Viewer Mode` shows only outside a viewer, its "leave" twin only inside one.
+fn viewer_entry_hidden(app: &CadApp, id: &str) -> bool {
+    match id {
+        "ui.viewer.on" => app.session.viewer,
+        "ui.viewer.off" => !app.session.viewer,
+        _ => false,
+    }
+}
+
+/// Turn the read-only viewer on or off. The engine refuses every drawing-changing command while
+/// it is on ([`cadcraft_engine::cmd::viewer_allows`]) and [`crate::CadApp::draw`] hides the chrome.
+pub fn set_viewer(app: &mut CadApp, on: bool) {
+    if app.session.viewer == on {
+        return;
+    }
+    app.session.viewer = on;
+    let message = if on {
+        crate::tl!("Read-only viewer: drawing and editing are unavailable")
+    } else {
+        crate::tl!("Editing is available again")
+    };
+    app.session.echo(message.to_string());
+}
+
 /// Run a UI-only command. `None` if `id` isn't one.
 pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     crate::i18n::with_language(app.language(), || run_ui_command_inner(app, id, params))
 }
 
 fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    // A viewer keeps the panels, theme and language controls but never the commands that reach
+    // drawing data (see [`viewer_allows_ui`]). Leaving the viewer stays reachable.
+    if app.session.viewer && is_ui_command(id) && !viewer_allows_ui(id) {
+        let m = format!("read-only viewer: \"{id}\" is not available");
+        app.session.echo(m.clone());
+        return Some(Err(m));
+    }
     if let Some(result) = crate::spacemouse::route(app, id, params) {
         return Some(result);
     }
@@ -292,6 +334,17 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             app.ui = crate::UiState { in_window_menu: menu, theme, interface_language, save_format, save_version, ..Default::default() };
             Ok(Value::Null)
         }
+        "ui.viewer.on" | "ui.viewer.off" => {
+            set_viewer(app, id == "ui.viewer.on");
+            Ok(json!({ "viewer": app.session.viewer }))
+        }
+        // `{"viewer": true|false}` sets the mode; without it, reports it.
+        "ui.viewer" => {
+            if let Some(on) = params.get("viewer").and_then(Value::as_bool) {
+                set_viewer(app, on);
+            }
+            Ok(json!({ "viewer": app.session.viewer }))
+        }
         "ui.start" => {
             app.ui.start_tab = true;
             Ok(Value::Null)
@@ -455,15 +508,23 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
             }
         }
     };
+    // A read-only viewer keeps only the commands it may run, so nothing the engine would refuse
+    // ever reaches a menu (see `cadcraft_engine::cmd::viewer_allows` and [`viewer_allows_ui`]).
+    let viewer = app.session.viewer;
     for c in cadcraft_engine::command_specs() {
-        if !c.menu.is_empty() {
+        if !c.menu.is_empty() && (!viewer || cadcraft_engine::cmd::viewer_allows(c.id, &Value::Null)) {
             add(c.menu, c.label, c.id, c.shortcut, (c.enabled)(&app.session).is_ok());
         }
     }
     for (id, label, menu, sc) in UI_COMMANDS {
-        if !menu.is_empty() {
+        if !menu.is_empty() && (!viewer || viewer_allows_ui(id)) && !viewer_entry_hidden(app, id) {
             add(menu, label, id, *sc, true);
         }
+    }
+    // A viewer drops the menus it emptied (Draw, Dimension, Modify…): a title with nothing under
+    // it would only advertise commands the engine is about to refuse.
+    if viewer {
+        out.retain(|(_, entries)| !entries.is_empty());
     }
     if let Some((_, file)) = out.iter_mut().find(|(m, _)| m == "File") {
         let at = file.iter().position(|e| matches!(e, Entry::Item { id, .. } if id == "open")).map_or(0, |i| i + 1);

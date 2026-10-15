@@ -355,7 +355,13 @@ pub fn install_fonts(ctx: &egui::Context, chinese: bool) {
         .collect();
     // A sans-serif face reads best in the interface.
     embedded.sort_by_key(|f| !f.family.contains("Gothic") && !f.family.contains("Sans"));
-    added.extend(embedded.first().map(|f| (format!("craft-{}", f.stem()), std::sync::Arc::new(egui::FontData::from_static(f.bytes)))));
+    // A Chinese face must come first. (This checkout's web build drops the stock Japanese face,
+    // so Noto Sans CJK SC is the only CJK face there; keeping the order explicit protects a build
+    // that embeds both — Japanese fonts share most CJK ideographs but lack simplified-only
+    // glyphs, 图 园 测, which would then render as tofu in the UI.)
+    embedded.sort_by_key(|f| !f.scripts.contains(&"Hans"));
+    // Register every embedded CJK face, not just the first: each covers different scripts.
+    added.extend(embedded.iter().map(|f| (format!("craft-{}", f.stem()), std::sync::Arc::new(egui::FontData::from_static(f.bytes)))));
     for (name, data) in added {
         fonts.font_data.insert(name.clone(), data);
         for family in [FontFamily::Proportional, FontFamily::Monospace] {
@@ -441,9 +447,19 @@ fn japanese_font() -> Option<&'static std::path::Path> {
     None
 }
 
-/// Whether the interface can show `language`: Chinese needs an installed CJK font.
+/// Whether the interface can show `language`: Chinese needs a font with its glyphs, either one
+/// installed on the computer or the CJK face embedded from craft-fonts.
 pub fn can_show(language: &str) -> bool {
-    !language.starts_with("zh") || cjk_font().is_some()
+    !language.starts_with("zh") || cjk_font().is_some() || embedded_han()
+}
+
+/// Whether an embedded face (craft-fonts) carries Han glyphs. The web build has no system fonts,
+/// so its Chinese interface rides on the CJK face compiled into the wasm; without this the web
+/// build would fall back to English however good the catalog is.
+fn embedded_han() -> bool {
+    cadcraft_fonts::CRAFT_FONTS
+        .iter()
+        .any(|f| f.style == "Regular" && f.scripts.iter().any(|s| matches!(*s, "Hans" | "Hant")))
 }
 
 /// egui's visuals for `theme`, from its tokens.

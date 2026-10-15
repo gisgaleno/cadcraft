@@ -545,6 +545,13 @@ impl CadApp {
 
     fn draw(&mut self, ui: &mut egui::Ui) {
         let t0 = now_ms();
+        // A read-only viewer hides the drawing chrome. Enforced here rather than at each toggle so
+        // it holds whatever a command did — Window ▸ Tool Bar and Reset Palettes included.
+        if self.session.viewer {
+            self.ui.show_toolbar = false;
+            self.ui.show_toolsets = false;
+            self.ui.show_command_line = false;
+        }
         control::begin_frame(ui.ctx());
         let t = theme::Tokens::get();
         chrome::title_and_toolbar(self, ui);

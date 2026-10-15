@@ -956,6 +956,10 @@
 	Vertical	垂直
 	VerticalDistance	垂直距离
 	View	视图
+	Read-only Viewer Mode	只读查看模式
+	Leave Read-only Viewer Mode	退出只读查看模式
+	Read-only viewer: drawing and editing are unavailable	只读查看模式：绘图与编辑不可用
+	Editing is available again	已恢复编辑功能
 	ViewCube	视图立方
 	Viewport	视口
 	Viewport Layer Freeze	视口图层冻结
